@@ -101,3 +101,45 @@ class MoeModel(models.BaseModel):
     final_probabilities = tf.reshape(final_probabilities_by_class_and_batch,
                                      [-1, vocab_size])
     return {"predictions": final_probabilities}
+
+class TwoStreamFusion(models.BaseModel):
+  """Video stream and Audio stream softmax with L2 regularization and average fusion"""
+
+  def create_model(self,
+                   model_input,
+                   vocab_size,
+                   l2_penalty=1e-8,
+                   **unused_params):
+    """Creates a Video level two stream fusion model
+     Input: 'batch_size' x 'num_features' => num_features should have (1024 + 128)
+     Returns:
+         A dictionary contains 'batch_size'x'vocab_size' tensor
+    """
+    if tf.shape(model_input)[1] != (1024+128):
+      raise StandardError("TwoStreamFusion model: the model input shape is %d, doesn't match requirement of 1152",
+                          tf.shape(model_input)[1])
+    rgb_input, audio_input = tf.split(model_input, [1024, 128], 1)
+    
+    rgb_fc = slim.fully_connected(
+        rgb_input,
+        vocab_size,
+        activation_fn=tf.nn.sigmoid,
+        weights_regularizer=slim.l2_regularizer(l2_penalty),
+        scope="rgb_fc")
+
+    rgb_softmax = tf.nn.softmax(rgb_fc, name="rgb_softmax")
+
+    audio_fc = slim.fully_connected(
+        audio_input,
+        vocab_size,
+        activation_fn=tf.nn.sigmoid,
+        weights_regularizer=slim.l2_regularizer(l2_penalty),
+        scope="audio_fc")
+
+    audio_softmax = tf.nn.softmax(audio_fc, name="audio_softmax")
+    output_sum = tf.add(rgb_softmax, audio_softmax, name="output_sum")
+    scalar = tf.constant(0.5)
+
+    output = tf.scalar_mul(scalar, output_sum)
+    return {"predictions": output}
+
