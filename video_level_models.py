@@ -146,7 +146,7 @@ class TwoStreamFusion(models.BaseModel):
     output = tf.nn.softmax(concate_softmax_fc) 
     return {"predictions": output}
 
-class TwoStreamDeepFC(models.BaseModel):
+class TwoStreamDeepRelu(models.BaseModel):
   def create_model(self,
                    model_input,
                    vocab_size,
@@ -190,9 +190,56 @@ class TwoStreamDeepFC(models.BaseModel):
         concate_rgb_audio,
         vocab_size,
         activation_fn=tf.nn.relu,
+        scope="final_fc")
+    output = tf.nn.softmax(concate_fc)
+    return {"predictions": output}
+
+class TwoStreamDeepLogistic(models.BaseModel):
+  def create_model(self,
+                   model_input,
+                   vocab_size,
+                   l2_penalty=1e-8,
+                   **unused_params):
+    rgb_input, audio_input = tf.split(model_input, [1024, 128], 1)
+    rgb_fc1 = slim.fully_connected(
+        rgb_input,
+        512,
+        activation_fn=tf.nn.sigmoid,
+        scope="rgb_fc1")
+    rgb_fc2 = slim.fully_connected(
+        rgb_input,
+        2048,
+        activation_fn=tf.nn.sigmoid,
+        scope="rgb_fc2")
+    rgb_fc3 = slim.fully_connected(
+        rgb_input,
+        4096,
+        activation_fn=tf.nn.sigmoid,
+        scope="rgb_fc3")
+
+    audio_fc1 = slim.fully_connected(
+        audio_input,
+        64,
+        activation_fn=tf.nn.sigmoid,
+        scope="audio_fc1")
+    audio_fc2 = slim.fully_connected(
+        rgb_input,
+        1024,
+        activation_fn=tf.nn.sigmoid,
+        scope="audio_fc2")
+    audio_fc3 = slim.fully_connected(
+        rgb_input,
+        2048,
+        activation_fn=tf.nn.sigmoid,
+        scope="audio_fc3")
+
+    concate_rgb_audio = tf.concat([rgb_fc3, audio_fc3], 1)
+    concate_fc = slim.fully_connected(
+        concate_rgb_audio,
+        vocab_size,
+        activation_fn=tf.nn.sigmoid,
         weights_regularizer=slim.l2_regularizer(l2_penalty),
         scope="final_fc")
     output = tf.nn.softmax(concate_fc)
     return {"predictions": output}
 
-         
