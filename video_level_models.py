@@ -130,7 +130,7 @@ class RGBSingleStream(models.BaseModel):
       scope=prefix+"rgb_fc3"
     )
     output = tf.nn.softmax(rgb_fc3)
-    return {"predictions":output, "inference_out":rgb_fc3}
+    return {"predictions":output, "inference_output":rgb_fc2}
 
 class AudioSingleStream(models.BaseModel):
   def create_model(self,
@@ -160,7 +160,7 @@ class AudioSingleStream(models.BaseModel):
       scope=prefix+"audio_fc3"
     )
     output = tf.nn.softmax(audio_fc3)
-    return {"predictions":output, "inference_out":audio_fc3}
+    return {"predictions":output, "inference_output":audio_fc2}
 
 class TwoStreamLateFusion(models.BaseModel):
   def create_model(self,
@@ -169,8 +169,8 @@ class TwoStreamLateFusion(models.BaseModel):
                    l2_penalty=1e-8,
                    **unused_params):
     rgb_input, audio_input = tf.split(model_input, [1024, 128], 1)
-    rgb_output = RGBSingleStream.create_model(rgb_input, vocab_size, l2_penalty=l2_penalty, prefix="")
-    audio_output = AudioSingleStream.create_model(audio_input, vocab_size, l2_penalty=l2_penalty, prefix="")
+    rgb_output = RGBSingleStream().create_model(rgb_input, vocab_size, l2_penalty=l2_penalty, prefix="")
+    audio_output = AudioSingleStream().create_model(audio_input, vocab_size, l2_penalty=l2_penalty, prefix="")
     output_sum = tf.add(rgb_output["predictions"], audio_output["predictions"])
     scalar = tf.constant(0.5)
     output = tf.scalar_mul(scalar, output_sum)
@@ -181,25 +181,28 @@ class TwoStreamEarlyFusion(models.BaseModel):
                    model_input,
                    vocab_size,
                    l2_penalty=1e-8,
-                   use_in_hybrid=False
+                   use_in_hybrid=False,
                    **unused_params):
-    restore_concate_fc = False
     prefix = ""
     if use_in_hybrid:
-      restore_concate_fc = True
       prefix = "hybrid_"
     rgb_input, audio_input = tf.split(model_input, [1024, 128], 1)
-    rgb_output = RGBSingleStream.create_model(rgb_input, vocab_size, l2_penalty=l2_penalty, prefix=prefix)
-    audio_output = AudioSingleStream.create_model(audio_input, vocab_size, l2_penalty=l2_penalty, prefix=prefix)
+    rgb_output = RGBSingleStream().create_model(rgb_input, vocab_size, l2_penalty=l2_penalty, prefix=prefix)
+    audio_output = AudioSingleStream().create_model(audio_input, vocab_size, l2_penalty=l2_penalty, prefix=prefix)
     concate = tf.concat([rgb_output["inference_output"], audio_output["inference_output"]], 1)
-    concate_fc = tf.slim.fully_connected(
+    concate_fc1 = slim.fully_connected(
       concate,
-      vocab_size,
-      activation=None,
-      scope=prefix+"concate_fc",
-      restore=restore_concate_fc
+      4096,
+      activation_fn=tf.nn.relu,
+      scope=prefix+"concate_fc1"
     )
-    output = tf.nn.softmax(concate_fc)
+    concate_fc2 = slim.fully_connected(
+      concate_fc1,
+      vocab_size,
+      activation_fn=None,
+      scope=prefix+"concate_fc2"
+    )
+    output = tf.nn.softmax(concate_fc2)
     return {"predictions": output}
 
 class TwoStreamHybridFusion(models.BaseModel):
@@ -209,12 +212,13 @@ class TwoStreamHybridFusion(models.BaseModel):
                    l2_penalty=1e-8,
                    **unused_params):
     rgb_input, audio_input = tf.split(model_input, [1024, 128], 1)
-    rgb_single_output = RGBSingleStream.create_model(rgb_input, vocab_size, l2_penalty=l2_penalty)
-    audio_single_output = AudioSingleStream.create_model(audio_input, vocab_size, l2_penalty=l2_penalty)
-    early_fusion_output = TwoStreamEarlyFusion(model_input, vocab_size, l2_penalty=l2_penalty, use_in_hybrid=True)
-    output_sum = tf.accumulate_n([rgb_single_output["predictions"], audio_single_output["predictions"], early_fusion_output["predictions"]])
+    rgb_single_output = RGBSingleStream().create_model(rgb_input, vocab_size, l2_penalty=l2_penalty)
+    audio_single_output = AudioSingleStream().create_model(audio_input, vocab_size, l2_penalty=l2_penalty)
+    early_fusion_output = TwoStreamEarlyFusion().create_model(model_input, vocab_size, l2_penalty=l2_penalty, use_in_hybrid=True)
+    output_sum = tf.add(rgb_single_output["predictions"], audio_single_output["predictions"])
+    output_sum2 = tf.add(output_sum, early_fusion_output["predictions"])
     scalar = tf.constant(0.333)
-    output = tf.scalar_mul(scalar, output_sum)
+    output = tf.scalar_mul(scalar, output_sum2)
     return {"predictions": output}
 
 

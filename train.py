@@ -355,13 +355,48 @@ class Trainer(object):
 
         if not meta_filename:
           saver = self.build_model(self.model, self.reader)
-
+          restorers = []
+          if len(FLAGS.train_two_stream_fusion_ckpt_path) > 0:
+            layers = [["rgb_fc1","rgb_fc2","rgb_fc3"], ["audio_fc1", "audio_fc2", "audio_fc3"]]
+            for i in range(len(layers)):
+              variables = slim.get_variables_to_restore(include=layers[i])
+              for var in variables:
+                logging.info("variable %s",var.op.name)
+              logging.info("create restorer")
+              restorer = tf.train.Saver(variables)
+              logging.info("append")
+              restorers.append(restorer)
+          if len(FLAGS.train_hybrid_fusion_ckpt_path) > 0:
+            dirs = FLAGS.train_hybrid_fusion_ckpt_path.split(',')
+            logging.info("Restoring early fusion layer parameters with path %s.", dirs[0])
+            logging.info("Restoring late fusion layer parameters with path %s.", dirs[1])
+            late_variables = []
+            early_variables = {}
+            variables_to_restore = tf.get_collection(slim.variables.VARIABLES_TO_RESTORE)
+            for var in variables_to_restore:
+              if "hybrid_" in var.op.name:
+                newVar = var.op.name.replace("hybrid_", "")
+                early_variables[newVar] = var
+              else:
+                late_variables.append(var)
+            early_restorer = tf.train.Saver(early_variables)
+            early_restorer.recover_last_checkpoints(dirs[0])
+            late_restorer = tf.train.Saver(late_variables)
+            late_restorer.recover_last_checkpoints(dirs[1])
+            restorers.append(early_restorer)
+            restorers.append(later_restorer)
         global_step = tf.get_collection("global_step")[0]
         loss = tf.get_collection("loss")[0]
         predictions = tf.get_collection("predictions")[0]
         labels = tf.get_collection("labels")[0]
         train_op = tf.get_collection("train_op")[0]
         init_op = tf.global_variables_initializer()
+
+    def restore_data(sess):
+      dirs = FLAGS.train_two_stream_fusion_ckpt_path.split(',')
+      for i in range(len(restorers)):
+        logging.info("restore %s",dirs[i])
+        restorers[i].restore(sess, dirs[i])    
 
     sv = tf.train.Supervisor(
         graph,
@@ -371,43 +406,13 @@ class Trainer(object):
         global_step=global_step,
         save_model_secs=15 * 60,
         save_summaries_secs=120,
-        saver=saver)
+        saver=saver,
+        init_fn=restore_data)
 
     logging.info("%s: Starting managed session.", task_as_string(self.task))
     with sv.managed_session(target, config=self.config) as sess:
 
       try:
-        if len(FLAGS.train_two_stream_fusion_ckpt_path) > 0:
-          dirs = FLAGS.train_two_stream_fusion_ckpt_path.split(',')
-          logging.info("Restoring rgb layer parameters with path %s.", dirs[0])
-          logging.info("Restoring audio layer parameters with path %s.", dirs[1])
-          layers = [["rgb_fc1", "rgb_fc2", "rgb_fc3"], ["audio_fc1", "audio_fc2", "audio_fc3"]]
-          for i in range(len(layers)):
-            variables = []
-            for l in layers[i]:
-              variables.extend(slim.variables.get_variables(l))
-            restorer = tf.train.Saver(variables)
-            restorer.recover_last_checkpoints(dirs[i])
-            restorer.restore(sess, restorer.latest_checkpoint())
-        if len(FLAGS.train_hybrid_fusion_ckpt_path) > 0:
-          dirs = FLAGS.train_hybrid_fusion_ckpt_path.split(',')
-          logging.info("Restoring early fusion layer parameters with path %s.", dirs[0])
-          logging.info("Restoring late fusion layer parameters with path %s.", dirs[1])
-          late_variables = []
-          early_variables = {}
-          variables_to_restore = tf.get_collection(slim.variables.VARIABLES_TO_RESTORE)
-          for var in variables_to_restore:
-            if "hybrid_" in var.op.name:
-              newVar = var.op.name.replace("hybrid_", "")
-              early_variables[newVar] = var
-            else:
-              late_variables.append(var)
-          early_restorer = tf.train.Saver(early_variables)
-          early_restorer.recover_last_checkpoints(dirs[0])
-          early_restorer.restore(sess, early_restorer.latest_checkpoint())
-          late_restorer = tf.train.Saver(late_variables)
-          late_restorer.recover_last_checkpoints(dirs[1])
-          late_restorer.restore(sess, late_restorer.latest_checkpoint())
         logging.info("%s: Entering training loop.", task_as_string(self.task))
         while (not sv.should_stop()) and (not self.max_steps_reached):
 
@@ -472,7 +477,6 @@ class Trainer(object):
       return
 
     last_checkpoint = saver.save(session, save_path, global_step_val)
-
     model_dir = "{0}/export/step_{1}".format(self.train_dir, global_step_val)
     logging.info("%s: Exporting the model at step %s to %s.",
                  task_as_string(self.task), global_step_val, model_dir)
@@ -557,9 +561,10 @@ class Trainer(object):
                  num_readers=FLAGS.num_readers,
                  batch_size=FLAGS.batch_size,
                  num_epochs=FLAGS.num_epochs)
-  
+    
     return tf.train.Saver(max_to_keep=0, keep_checkpoint_every_n_hours=0.25)
-
+  
+  
 
 def get_reader():
   # Convert feature_names and feature_sizes to lists of values.
