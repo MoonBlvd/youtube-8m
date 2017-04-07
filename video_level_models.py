@@ -102,49 +102,121 @@ class MoeModel(models.BaseModel):
                                      [-1, vocab_size])
     return {"predictions": final_probabilities}
 
-class TwoStreamFusion(models.BaseModel):
-  """Video stream and Audio stream softmax with L2 regularization and average fusion"""
+class RGBSingleStream(models.BaseModel):
+  def create_model(self,
+                   model_input,
+                   vocab_size,
+                   l2_penalty=1e-8,
+                   prefix="",
+                   **unused_params):
+    rgb_fc1 = slim.fully_connected(
+      model_input,
+      4096,
+      activation_fn=tf.nn.relu,
+      scope=prefix+"rgb_fc1"
+    )
 
+    rgb_fc2 = slim.fully_connected(
+      rgb_fc1,
+      4096,
+      activation_fn=tf.nn.relu,
+      scope=prefix+"rgb_fc2"
+    )
+
+    rgb_fc3 = slim.fully_connected(
+      rgb_fc2,
+      vocab_size,
+      activation_fn=None,
+      scope=prefix+"rgb_fc3"
+    )
+    output = tf.nn.softmax(rgb_fc3)
+    return {"predictions":output, "inference_out":rgb_fc3}
+
+class AudioSingleStream(models.BaseModel):
+  def create_model(self,
+                   model_input,
+                   vocab_size,
+                   l2_penalty=1e-8,
+                   prefix="",
+                   **unused_params):
+    audio_fc1 = slim.fully_connected(
+      model_input,
+      4096,
+      activation_fn=tf.nn.relu,
+      scope=prefix+"audio_fc1"
+    )
+
+    audio_fc2 = slim.fully_connected(
+      audio_fc1,
+      4096,
+      activation_fn=tf.nn.relu,
+      scope=prefix+"audio_fc2"
+    )
+
+    audio_fc3 = slim.fully_connected(
+      audio_fc2,
+      vocab_size,
+      activation_fn=None,
+      scope=prefix+"audio_fc3"
+    )
+    output = tf.nn.softmax(audio_fc3)
+    return {"predictions":output, "inference_out":audio_fc3}
+
+class TwoStreamLateFusion(models.BaseModel):
   def create_model(self,
                    model_input,
                    vocab_size,
                    l2_penalty=1e-8,
                    **unused_params):
-    """Creates a Video level two stream fusion model
-     Input: 'batch_size' x 'num_features' => num_features should have (1024 + 128)
-     Returns:
-         A dictionary contains 'batch_size'x'vocab_size' tensor
-    """
     rgb_input, audio_input = tf.split(model_input, [1024, 128], 1)
-    
-    rgb_fc = slim.fully_connected(
-        rgb_input,
-        vocab_size,
-        activation_fn=tf.nn.sigmoid,
-        weights_regularizer=slim.l2_regularizer(l2_penalty),
-        scope="rgb_fc")
-
-    rgb_softmax = tf.nn.softmax(rgb_fc, name="rgb_softmax")
-
-    audio_fc = slim.fully_connected(
-        audio_input,
-        vocab_size,
-        activation_fn=tf.nn.sigmoid,
-        weights_regularizer=slim.l2_regularizer(l2_penalty),
-        scope="audio_fc")
-
-    audio_softmax = tf.nn.softmax(audio_fc, name="audio_softmax")
-
-    concate_softmax = tf.concat([rgb_softmax, audio_softmax], 1)
-    concate_softmax_fc = slim.fully_connected(
-        concate_softmax,
-        vocab_size,
-        activation_fn=tf.nn.relu,
-        weights_regularizer=slim.l2_regularizer(l2_penalty),
-        scope="final_fc")
-
-    output = tf.nn.softmax(concate_softmax_fc) 
+    rgb_output = RGBSingleStream.create_model(rgb_input, vocab_size, l2_penalty=l2_penalty, prefix="")
+    audio_output = AudioSingleStream.create_model(audio_input, vocab_size, l2_penalty=l2_penalty, prefix="")
+    output_sum = tf.add(rgb_output["predictions"], audio_output["predictions"])
+    scalar = tf.constant(0.5)
+    output = tf.scalar_mul(scalar, output_sum)
     return {"predictions": output}
+
+class TwoStreamEarlyFusion(models.BaseModel):
+  def create_model(self,
+                   model_input,
+                   vocab_size,
+                   l2_penalty=1e-8,
+                   use_in_hybrid=False
+                   **unused_params):
+    restore_concate_fc = False
+    prefix = ""
+    if use_in_hybrid:
+      restore_concate_fc = True
+      prefix = "hybrid_"
+    rgb_input, audio_input = tf.split(model_input, [1024, 128], 1)
+    rgb_output = RGBSingleStream.create_model(rgb_input, vocab_size, l2_penalty=l2_penalty, prefix=prefix)
+    audio_output = AudioSingleStream.create_model(audio_input, vocab_size, l2_penalty=l2_penalty, prefix=prefix)
+    concate = tf.concat([rgb_output["inference_output"], audio_output["inference_output"]], 1)
+    concate_fc = tf.slim.fully_connected(
+      concate,
+      vocab_size,
+      activation=None,
+      scope=prefix+"concate_fc",
+      restore=restore_concate_fc
+    )
+    output = tf.nn.softmax(concate_fc)
+    return {"predictions": output}
+
+class TwoStreamHybridFusion(models.BaseModel):
+  def create_model(self,
+                   model_input,
+                   vocab_size,
+                   l2_penalty=1e-8,
+                   **unused_params):
+    rgb_input, audio_input = tf.split(model_input, [1024, 128], 1)
+    rgb_single_output = RGBSingleStream.create_model(rgb_input, vocab_size, l2_penalty=l2_penalty)
+    audio_single_output = AudioSingleStream.create_model(audio_input, vocab_size, l2_penalty=l2_penalty)
+    early_fusion_output = TwoStreamEarlyFusion(model_input, vocab_size, l2_penalty=l2_penalty, use_in_hybrid=True)
+    output_sum = tf.accumulate_n([rgb_single_output["predictions"], audio_single_output["predictions"], early_fusion_output["predictions"]])
+    scalar = tf.constant(0.333)
+    output = tf.scalar_mul(scalar, output_sum)
+    return {"predictions": output}
+
 
 class TwoStreamDeepRelu(models.BaseModel):
   def create_model(self,
@@ -193,53 +265,3 @@ class TwoStreamDeepRelu(models.BaseModel):
         scope="final_fc")
     output = tf.nn.softmax(concate_fc)
     return {"predictions": output}
-
-class TwoStreamDeepLogistic(models.BaseModel):
-  def create_model(self,
-                   model_input,
-                   vocab_size,
-                   l2_penalty=1e-8,
-                   **unused_params):
-    rgb_input, audio_input = tf.split(model_input, [1024, 128], 1)
-    rgb_fc1 = slim.fully_connected(
-        rgb_input,
-        512,
-        activation_fn=tf.nn.sigmoid,
-        scope="rgb_fc1")
-    rgb_fc2 = slim.fully_connected(
-        rgb_input,
-        2048,
-        activation_fn=tf.nn.sigmoid,
-        scope="rgb_fc2")
-    rgb_fc3 = slim.fully_connected(
-        rgb_input,
-        4096,
-        activation_fn=tf.nn.sigmoid,
-        scope="rgb_fc3")
-
-    audio_fc1 = slim.fully_connected(
-        audio_input,
-        64,
-        activation_fn=tf.nn.sigmoid,
-        scope="audio_fc1")
-    audio_fc2 = slim.fully_connected(
-        rgb_input,
-        1024,
-        activation_fn=tf.nn.sigmoid,
-        scope="audio_fc2")
-    audio_fc3 = slim.fully_connected(
-        rgb_input,
-        2048,
-        activation_fn=tf.nn.sigmoid,
-        scope="audio_fc3")
-
-    concate_rgb_audio = tf.concat([rgb_fc3, audio_fc3], 1)
-    concate_fc = slim.fully_connected(
-        concate_rgb_audio,
-        vocab_size,
-        activation_fn=tf.nn.sigmoid,
-        weights_regularizer=slim.l2_regularizer(l2_penalty),
-        scope="final_fc")
-    output = tf.nn.softmax(concate_fc)
-    return {"predictions": output}
-

@@ -99,6 +99,10 @@ if __name__ == "__main__":
       "log_device_placement", False,
       "Whether to write the device on which every op will run into the "
       "logs on startup.")
+  flags.DEFINE_string("train_two_stream_fusion_ckpt_path", "", "pretrained checkpoint paths for"
+                      " late fusion, should have two path separate by comma in form rgb,audio")
+  flags.DEFINE_string("train_hybrid_fusion_ckpt_path", "", "pretrained checkpoint paths for"
+                      "early fusion, should have two path separate by comma in form early, late")
 
 def validate_class_name(flag_value, category, modules, expected_superclass):
   """Checks that the given string matches a class of the expected type.
@@ -373,6 +377,37 @@ class Trainer(object):
     with sv.managed_session(target, config=self.config) as sess:
 
       try:
+        if len(FLAGS.train_two_stream_fusion_ckpt_path) > 0:
+          dirs = FLAGS.train_two_stream_fusion_ckpt_path.split(',')
+          logging.info("Restoring rgb layer parameters with path %s.", dirs[0])
+          logging.info("Restoring audio layer parameters with path %s.", dirs[1])
+          layers = [["rgb_fc1", "rgb_fc2", "rgb_fc3"], ["audio_fc1", "audio_fc2", "audio_fc3"]]
+          for i in range(len(layers)):
+            variables = []
+            for l in layers[i]:
+              variables.extend(slim.variables.get_variables(l))
+            restorer = tf.train.Saver(variables)
+            restorer.recover_last_checkpoints(dirs[i])
+            restorer.restore(sess, restorer.latest_checkpoint())
+        if len(FLAGS.train_hybrid_fusion_ckpt_path) > 0:
+          dirs = FLAGS.train_hybrid_fusion_ckpt_path.split(',')
+          logging.info("Restoring early fusion layer parameters with path %s.", dirs[0])
+          logging.info("Restoring late fusion layer parameters with path %s.", dirs[1])
+          late_variables = []
+          early_variables = {}
+          variables_to_restore = tf.get_collection(slim.variables.VARIABLES_TO_RESTORE)
+          for var in variables_to_restore:
+            if "hybrid_" in var.op.name:
+              newVar = var.op.name.replace("hybrid_", "")
+              early_variables[newVar] = var
+            else:
+              late_variables.append(var)
+          early_restorer = tf.train.Saver(early_variables)
+          early_restorer.recover_last_checkpoints(dirs[0])
+          early_restorer.restore(sess, early_restorer.latest_checkpoint())
+          late_restorer = tf.train.Saver(late_variables)
+          late_restorer.recover_last_checkpoints(dirs[1])
+          late_restorer.restore(sess, late_restorer.latest_checkpoint())
         logging.info("%s: Entering training loop.", task_as_string(self.task))
         while (not sv.should_stop()) and (not self.max_steps_reached):
 
