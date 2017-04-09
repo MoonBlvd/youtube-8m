@@ -126,10 +126,12 @@ class RGBSingleStream(models.BaseModel):
     rgb_fc3 = slim.fully_connected(
       rgb_fc2,
       vocab_size,
-      activation_fn=None,
+      activation_fn=None, #tf.nn.sigmoid,
+      #weights_regularizer=slim.l2_regularizer(l2_penalty),
       scope=prefix+"rgb_fc3"
     )
-    output = tf.nn.softmax(rgb_fc3)
+    #output = tf.nn.softmax(rgb_fc3)
+    output = tf.nn.sigmoid(rgb_fc3)
     return {"predictions":output, "inference_output":rgb_fc2}
 
 class AudioSingleStream(models.BaseModel):
@@ -156,10 +158,12 @@ class AudioSingleStream(models.BaseModel):
     audio_fc3 = slim.fully_connected(
       audio_fc2,
       vocab_size,
-      activation_fn=None,
+      activation_fn=None,#tf.nn.sigmoid,
+      #weights_regularizer=slim.l2_regularizer(l2_penalty),
       scope=prefix+"audio_fc3"
     )
-    output = tf.nn.softmax(audio_fc3)
+    #output = tf.nn.softmax(audio_fc3)
+    output = tf.nn.sigmoid(audio_fc3)
     return {"predictions":output, "inference_output":audio_fc2}
 
 class TwoStreamLateFusion(models.BaseModel):

@@ -234,3 +234,96 @@ class LstmModel(models.BaseModel):
         model_input=state,
         vocab_size=vocab_size,
         **unused_params)
+
+class RGBTemporalConv(models.BaseModel):
+
+  def create_model(self, model_input, vocab_size, num_frames, is_training=True, **unused_params):
+    """Creates a model which uses a logistic classifier over the average of the
+    frame-level features.
+
+    This class is intended to be an example for implementors of frame level
+    models. If you want to train a model over averaged features it is more
+    efficient to average them beforehand rather than on the fly.
+
+    Args:
+      model_input: A 'batch_size' x 'max_frames' x 'num_features' matrix of
+                   input features.
+      vocab_size: The number of classes in the dataset.
+      num_frames: A vector of length 'batch' which indicates the number of
+           frames for each video (before padding).
+
+    Returns:
+      A dictionary with a tensor containing the probability predictions of the
+      model in the 'predictions' key. The dimensions of the tensor are
+      'batch_size' x 'num_classes'.
+    """
+    reuse = None
+    if not is_training:
+      reuse = True
+    model_input_extend = tf.expand_dims(model_input, 3) 
+    pool1 = slim.max_pool2d(model_input_extend, [4, 4], scope="rgb_pool1") # 64 x 256 x 1
+
+    conv1 = slim.conv2d(pool1, 64, [3, 3], 
+                        activation_fn=tf.nn.relu,
+                        normalizer_fn=slim.batch_norm, 
+                        normalizer_params={"is_training":is_training, "reuse":reuse, "scope":"rgb_conv1_bn"},
+                        scope="rgb_conv1") #64 x 256 x 64 
+
+    conv2 = slim.conv2d(conv1, 64, [3, 3], 
+                        activation_fn=tf.nn.relu,
+                        normalizer_fn=slim.batch_norm, 
+                        normalizer_params={"is_training":is_training, "reuse":reuse, "scope":"rgb_conv2_bn"},
+                        scope="rgb_conv2") #64 x 256 x 64 
+
+    pool2 = slim.max_pool2d(conv2, [2, 2], stride=4, scope="rgb_pool2") # 32 x 128 x 64 
+
+    conv3 = slim.conv2d(pool2, 128, [3, 3], 
+			activation_fn=tf.nn.relu,
+                        normalizer_fn=slim.batch_norm, 
+                        normalizer_params={"is_training":is_training, "reuse":reuse, "scope":"rgb_conv3_bn"},
+                        scope="rgb_conv3") # 32 x 128 x 128 
+
+    conv4 = slim.conv2d(conv3, 128, [3, 3], 
+			activation_fn=tf.nn.relu,
+                        normalizer_fn=slim.batch_norm, 
+                        normalizer_params={"is_training":is_training, "reuse":reuse, "scope":"rgb_conv4_bn"},
+                        scope="rgb_conv4") # 32 x 128 x 128 
+    
+    pool3 = slim.max_pool2d(conv4, [2, 2], scope="rgb_pool3") # 16 x 64 x 128
+
+    conv5 = slim.conv2d(pool3, 256, [3, 3], 
+			activation_fn=tf.nn.relu,
+                        normalizer_fn=slim.batch_norm, 
+                        normalizer_params={"is_training":is_training, "reuse":reuse, "scope":"rgb_conv5_bn"},
+                        scope="rgb_conv5") # 16 x 64 x 256 
+
+    conv6 = slim.conv2d(conv5, 256, [3, 3], 
+			activation_fn=tf.nn.relu,
+                        normalizer_fn=slim.batch_norm, 
+                        normalizer_params={"is_training":is_training, "reuse":reuse, "scope":"rgb_conv6_bn"},
+                        scope="rgb_conv6") # 16 x 64 x 256 
+    
+    pool4 = slim.max_pool2d(conv6, [2, 2], scope="rgb_pool4") # 8 x 32 x 128
+
+    conv7 = slim.conv2d(pool4, 512, [3, 3], 
+			activation_fn=tf.nn.relu,
+                        normalizer_fn=slim.batch_norm, 
+                        normalizer_params={"is_training":is_training, "reuse":reuse, "scope":"rgb_conv7_bn"},
+                        scope="rgb_conv7") # 8 x 32 x 512 
+
+    conv8 = slim.conv2d(conv7, 512, [3, 3], 
+			activation_fn=tf.nn.relu,
+                        normalizer_fn=slim.batch_norm, 
+                        normalizer_params={"is_training":is_training, "reuse":reuse, "scope":"rgb_conv8_bn"},
+                        scope="rgb_conv8") # 8 x 32 x 512 
+
+    pool5 = slim.max_pool2d(conv8, [2, 2], scope="rgb_pool5") # 2 x 8 x 512
+    new_feature = slim.flatten(pool5, scope="rgb_flatteb")
+    fc1 = slim.fully_connected(new_feature, 4096, activation_fn=tf.nn.relu, scope="rgb_temporal_fc1")
+    #drop1 = slim.dropout(fc1, 0.5, scope="rgb_drop1")
+    fc2 = slim.fully_connected(fc1, 4096, activation_fn=tf.nn.relu, scope="rgb_temporal_fc2")
+    #drop2 = slim.dropout(fc2, 0.5, scope="rgb_drop2")
+    fc3 = slim.fully_connected(fc2, vocab_size, activation_fn=None, scope="rgb_temporal_fc3")
+    output = tf.nn.sigmoid(fc3) 
+    return {"predictions": output}
+

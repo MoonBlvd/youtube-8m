@@ -370,21 +370,24 @@ class Trainer(object):
             dirs = FLAGS.train_hybrid_fusion_ckpt_path.split(',')
             logging.info("Restoring early fusion layer parameters with path %s.", dirs[0])
             logging.info("Restoring late fusion layer parameters with path %s.", dirs[1])
-            late_variables = []
+            late_layers = ["rgb_fc1","rgb_fc2","rgb_fc3", "audio_fc1", "audio_fc2", "audio_fc3"]
+            early_layers = []            
+            for l in late_layers:
+              early_layers.append("hybrid_"+l)
+            late_variables = slim.get_variables_to_restore(include=late_layers)
+            variables_to_restore = slim.get_variables_to_restore(include=early_layers)
             early_variables = {}
-            variables_to_restore = tf.get_collection(slim.variables.VARIABLES_TO_RESTORE)
+            for var in late_variables:
+              logging.info("variables %s", var.op.name)
             for var in variables_to_restore:
               if "hybrid_" in var.op.name:
+                logging.info("variables %s", var.op.name)
                 newVar = var.op.name.replace("hybrid_", "")
                 early_variables[newVar] = var
-              else:
-                late_variables.append(var)
             early_restorer = tf.train.Saver(early_variables)
-            early_restorer.recover_last_checkpoints(dirs[0])
             late_restorer = tf.train.Saver(late_variables)
-            late_restorer.recover_last_checkpoints(dirs[1])
             restorers.append(early_restorer)
-            restorers.append(later_restorer)
+            restorers.append(late_restorer)
         global_step = tf.get_collection("global_step")[0]
         loss = tf.get_collection("loss")[0]
         predictions = tf.get_collection("predictions")[0]
@@ -393,7 +396,10 @@ class Trainer(object):
         init_op = tf.global_variables_initializer()
 
     def restore_data(sess):
-      dirs = FLAGS.train_two_stream_fusion_ckpt_path.split(',')
+      if len(FLAGS.train_two_stream_fusion_ckpt_path) > 0:
+        dirs = FLAGS.train_two_stream_fusion_ckpt_path.split(',')
+      elif len(FLAGS.train_hybrid_fusion_ckpt_path) > 0:
+        dirs = FLAGS.train_hybrid_fusion_ckpt_path.split(',')
       for i in range(len(restorers)):
         logging.info("restore %s",dirs[i])
         restorers[i].restore(sess, dirs[i])    
