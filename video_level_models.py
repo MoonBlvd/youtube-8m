@@ -206,7 +206,8 @@ class TwoStreamEarlyFusion(models.BaseModel):
       activation_fn=None,
       scope=prefix+"concate_fc2"
     )
-    output = tf.nn.softmax(concate_fc2)
+    #output = tf.nn.softmax(concate_fc2)
+    output = tf.nn.sigmoid(concate_fc2)
     return {"predictions": output}
 
 class TwoStreamHybridFusion(models.BaseModel):

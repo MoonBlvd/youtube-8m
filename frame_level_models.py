@@ -327,3 +327,51 @@ class RGBTemporalConv(models.BaseModel):
     output = tf.nn.sigmoid(fc3) 
     return {"predictions": output}
 
+class MaxPoolFC(models.BaseModel):
+
+  def create_model(self, model_input, vocab_size, num_frames, prefix="", **unused_params):
+    """Creates a model which uses a logistic classifier over the average of the
+    frame-level features.
+
+    This class is intended to be an example for implementors of frame level
+    models. If you want to train a model over averaged features it is more
+    efficient to average them beforehand rather than on the fly.
+
+    Args:
+      model_input: A 'batch_size' x 'max_frames' x 'num_features' matrix of
+                   input features.
+      vocab_size: The number of classes in the dataset.
+      num_frames: A vector of length 'batch' which indicates the number of
+           frames for each video (before padding).
+
+    Returns:
+      A dictionary with a tensor containing the probability predictions of the
+      model in the 'predictions' key. The dimensions of the tensor are
+      'batch_size' x 'num_classes'.
+    """
+    model_input_reduced = tf.reduce_max(model_input, 1)
+    rgb_fc1 = slim.fully_connected(
+      model_input,
+      4096,
+      activation_fn=tf.nn.relu,
+      scope=prefix+"frame_rgb_fc1"
+    )
+
+    rgb_fc2 = slim.fully_connected(
+      rgb_fc1,
+      4096,
+      activation_fn=tf.nn.relu,
+      scope=prefix+"frame_rgb_fc2"
+    )
+
+    rgb_fc3 = slim.fully_connected(
+      rgb_fc2,
+      vocab_size,
+      activation_fn=None, #tf.nn.sigmoid,
+      #weights_regularizer=slim.l2_regularizer(l2_penalty),
+      scope=prefix+"frame_rgb_fc3"
+    )
+    #output = tf.nn.softmax(rgb_fc3)
+    output = tf.nn.sigmoid(rgb_fc3)
+    return {"predictions": output}
+
