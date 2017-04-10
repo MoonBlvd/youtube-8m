@@ -351,7 +351,7 @@ class MaxPoolFC(models.BaseModel):
     """
     model_input_reduced = tf.reduce_max(model_input, 1)
     rgb_fc1 = slim.fully_connected(
-      model_input,
+      model_input_reduced,
       4096,
       activation_fn=tf.nn.relu,
       scope=prefix+"frame_rgb_fc1"
