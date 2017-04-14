@@ -250,6 +250,7 @@ def evaluation_loop(video_id_batch, prediction_batch, label_batch, loss,
           "metrics.")
       # calculate the metrics for the entire epoch
       epoch_info_dict = evl_metrics.get()
+      print(epoch_info_dict)
       epoch_info_dict["epoch_id"] = global_step_val
 
       summary_writer.add_summary(summary_val, global_step_val)

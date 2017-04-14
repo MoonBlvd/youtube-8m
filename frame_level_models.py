@@ -237,7 +237,7 @@ class LstmModel(models.BaseModel):
 
 class RGBTemporalConv(models.BaseModel):
 
-  def create_model(self, model_input, vocab_size, num_frames, is_training=True, **unused_params):
+  def create_model(self, model_input, vocab_size, num_frames, is_training=False, **unused_params):
     """Creates a model which uses a logistic classifier over the average of the
     frame-level features.
 
